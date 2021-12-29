@@ -1,147 +1,490 @@
 #ifndef CHAO_H
 #define CHAO_H
 
-#include <SDL.h>
-#include <SDL_image.h>
 #include <stdio.h>
-#include "array.h"
-
-class Chao {
-
-public:
-
-	enum ScalingMode {
-		SCALING_MODE_NONE = 0,
-		SCALING_MODE_STRETCH,
-		SCALING_MODE_KEEP_RATIO,
-		SCALING_MODE_EXTEND,
-		SCALING_MODE_END
-	};
-
-	struct Image {
-		char* key = NULL;
-		SDL_Surface* surface = NULL;
-		int width;
-		int heigth;
-	};
-
-	Chao(int width, int height, ScalingMode scalingMode);
-	~Chao();
-
-	void runGameLoop();
-
-	void loadImage(char* key, char* imagePath);
-	Image getImage(char* key);
-	void drawImage(char* key, SDL_Surface* targetSurface, float x, float y,
-		float alpha = 1.0f, float scaleX = 1.0f, float scaleY = 1.0f, float angle = 0.0f,
-		float rotationOffsetX = 0.5f, float rotationOffsetY = 0.5f);
-	void drawImage(Image image, SDL_Surface* targetSurface, float x, float y,
-		float alpha, float scaleX, float scaleY, float angle,
-		float rotationOffsetX = 0.5f, float rotationOffsetY = 0.5f);
-	
-	void log(char* message);
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <limits.h>
+#include <algorithm>
+#include <windows.h>
+#include <GL/gl.h>
+#include "keyboard.h"
+#include "base64.h"
+#include "upng.h"
 
 
-private:
+#define MAX_IMAGES 256
 
-	const static int KEY_CODES_COUNT = 128;
 
-	SDL_Window* sdlWindow = NULL;
-	SDL_Surface* screenSurface = NULL;
-	Array<Image> images;
-
-	bool pressed[KEY_CODES_COUNT];
-	bool justPressed[KEY_CODES_COUNT];
-	bool justReleased[KEY_CODES_COUNT];
-
-	void resetInput();
+enum ScreenScalingMode {
+	SSM_NONE = 0,
+	SSM_STRETCH,
+	SSM_EXTEND,
+	SSM_END,
 };
 
-///////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////
 
-Chao::Chao(int width, int height, ScalingMode scalingMode) {
-	log("Initializing chao!");
-	SDL_Init(SDL_INIT_VIDEO);
-	sdlWindow = SDL_CreateWindow("chao.exe", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
-	screenSurface = SDL_GetWindowSurface(sdlWindow);
+class Vector2 {
+	public:
 
-	resetInput();
+	float x, y;
+
+	Vector2() {
+		x = y = 0.f;
+	}
+	Vector2(float x, float y) {
+		this->x = x;
+		this->y = y;
+	}
+
+	Vector2& operator = (const Vector2 &a) {
+		x = a.x;
+		y = a.y;
+		return *this;
+	}
+
+	Vector2 operator + (const Vector2 &a) { return Vector2(x + a.x, y + a.y); }
+	Vector2 operator - (const Vector2 &a) { return Vector2(x - a.x, y - a.y); }
+	Vector2 operator * (const Vector2 &a) { return Vector2(x * a.x, y * a.y); }
+	Vector2 operator / (const Vector2 &a) { return Vector2(x / a.x, y / a.y); }
+	Vector2 operator + (const float &a) { return Vector2(x + a, y + a); }
+	Vector2 operator - (const float &a) { return Vector2(x - a, y - a); }
+	Vector2 operator * (const float &a) { return Vector2(x * a, y * a); }
+	Vector2 operator / (const float &a) { return Vector2(x / a, y / a); }
+
+	void print() {
+		printf("%.1fx%.1f\n", x, y);
+	}
+};
+
+class Rect {
+	public:
+	float x, y, w, h;
+	Rect() {
+		x = y = w = h = 0.f;
+	}
+	Rect(float x, float y, float w, float h) {
+		this->x = x;
+		this->y = y;
+		this->w = w;
+		this->h = h;
+	}
+
+	Rect operator + (const float &a) { return Rect(x + a, y + a, w + a, h + a); }
+	Rect operator - (const float &a) { return Rect(x - a, y - a, w - a, h - a); }
+	Rect operator * (const float &a) { return Rect(x * a, y * a, w * a, h * a); }
+	Rect operator / (const float &a) { return Rect(x / a, y / a, w / a, h / a); }
+
+};
+
+class Color {
+	public:
+
+	float r, g, b, a = 1.f;
+
+	Color() {
+		r = g = b = a = 1.f;
+	};
+	Color(float r, float g, float b, float a = 1.f) {
+		this->r = r;
+		this->g = g;
+		this->b = b;
+		this->a = a;
+	}
+
+	Color& operator = (const Color &other) {
+		r = other.r;
+		g = other.g;
+		b = other.b;
+		a = other.a;
+		return *this;
+	}
+};
+
+class Image {
+	public:
+	Image() {
+		name = NULL;
+		tex = -1;
+	}
+
+	char* name;
+	GLuint tex;
+	Vector2 size;
+};
+
+
+void chao_main();
+LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);
+
+HINSTANCE chao_h_instance;
+int chao_cmd_show;
+void on_resize();
+
+Image images[MAX_IMAGES];
+
+ScreenScalingMode screen_scaling_mode;
+Vector2 screen_size; // size of the viewport
+Vector2 base_screen_size; // the values passed in chao_init; base for screen scaling
+Vector2 window_size; // size of the actual window
+
+Color clear_color = Color(0,0,0,1);
+bool image_smoothing_enabled = false;
+
+bool pressed[256];
+bool just_pressed[256];
+bool just_released[256];
+
+float delta_time;
+float max_delta_time = 0.05;
+float time_scale = 1.f;
+float last_system_time;
+float fps_timer = 0.f;
+int fps_counter = 0;
+
+
+void update_delta_time() {
+	float current_time = (float)GetTickCount() / 1000.0f;
+	delta_time = std::min(current_time - last_system_time, max_delta_time);
+	last_system_time = current_time;
+
+	// fps_counter ++;
+	// fps_timer += delta_time;
+	// if(fps_timer >= 1.f){
+	// 	printf("FPS: %d %f\n", fps_counter, delta_time);
+	// 	fps_timer -= 1.f;
+	// 	fps_counter = 0;
+	// } 
 }
 
-Chao::~Chao() {
-	SDL_FreeSurface(images[0].surface);
 
-	SDL_DestroyWindow(sdlWindow);
-	sdlWindow = NULL;
-	SDL_Quit();
+float get_delta_time() {
+	return delta_time * time_scale;
 }
 
-void Chao::runGameLoop() {
-	bool quit = false;
-	SDL_Event e;
 
-	// le game loop
-	while(!quit) {
+void chao_init(const char* window_name, int screen_width, int screen_height, ScreenScalingMode scaling_mode, void(*init_func_pointer)(), void(*update_func_pointer)()){
+	WNDCLASSEX wcex;
+	HWND hwnd;
+	HDC hDC;
+	HGLRC hRC;
+	MSG msg;
+	BOOL bQuit = FALSE;
 
-		while( SDL_PollEvent( &e ) != 0 )
-		{
-			switch (e.type) {
-				case SDL_QUIT:
-					quit = true;
-					break;
-				case SDL_KEYDOWN:
-					printf("\n%d", e.key.keysym.scancode);
-					break;
-				case SDL_KEYUP:
-					//
-					break;
+	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.style = CS_OWNDC;
+	wcex.lpfnWndProc = WindowProc;
+	wcex.cbClsExtra = 0;
+	wcex.cbWndExtra = 0;
+	wcex.hInstance = chao_h_instance;
+	wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wcex.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+	wcex.lpszMenuName = NULL;
+	wcex.lpszClassName = "ChaoWindow";
+	wcex.hIconSm = LoadIcon(NULL, IDI_APPLICATION);;
+	
+	if (!RegisterClassEx(&wcex)) {
+		return;
+	}
+
+	hwnd = CreateWindowEx(0,
+						  "ChaoWindow",	
+						  window_name,
+						  WS_OVERLAPPEDWINDOW,
+						  CW_USEDEFAULT,
+						  CW_USEDEFAULT,
+						  screen_width,
+						  screen_height,
+						  NULL,
+						  NULL,
+						  chao_h_instance,
+						  NULL);
+
+	ShowWindow(hwnd, chao_cmd_show);
+
+	// EnableOpenGL
+	{
+		PIXELFORMATDESCRIPTOR pfd;
+		int iFormat;
+		hDC = GetDC(hwnd);
+		ZeroMemory(&pfd, sizeof(pfd));
+		pfd.nSize = sizeof(pfd);
+		pfd.nVersion = 1;
+		pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+		pfd.iPixelType = PFD_TYPE_RGBA;
+		pfd.cColorBits = 24;
+		pfd.cDepthBits = 16;
+		pfd.iLayerType = PFD_MAIN_PLANE;
+		iFormat = ChoosePixelFormat(hDC, &pfd);
+		SetPixelFormat(hDC, iFormat, &pfd);
+		hRC = wglCreateContext(hDC);
+		wglMakeCurrent(hDC, hRC);
+
+		// for 2D
+		glDisable(GL_CULL_FACE);
+		glDisable(GL_DEPTH_TEST);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glEnable(GL_BLEND);
+		glDisable(GL_ALPHA_TEST);
+	}
+
+	// init stuff
+
+	screen_scaling_mode = scaling_mode;
+
+	RECT window_rect;
+	GetClientRect(hwnd, &window_rect);
+	window_size.x = window_rect.right - window_rect.left;
+	window_size.y = window_rect.bottom - window_rect.top;
+
+	screen_size = Vector2(screen_width, screen_height);
+	base_screen_size = Vector2(screen_width, screen_height);
+
+	on_resize();
+
+	if (init_func_pointer){
+		(*init_func_pointer)();
+	}
+
+	// main loopz
+
+	update_delta_time();
+
+	while (!bQuit) {
+
+		update_delta_time();
+
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			if (msg.message == WM_QUIT) {
+				bQuit = TRUE;
+			} else {
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+		} else{
+			glClearColor(clear_color.r, clear_color.g, clear_color.b, clear_color.a);
+			glClear(GL_COLOR_BUFFER_BIT);
+
+
+			if (update_func_pointer){
+				(*update_func_pointer)();
+			}
+			for(int i = 0; i < 256; ++i) {
+				just_pressed[i] = false;
+				just_released[i] = false;
 			}
 
-		}
-
-		SDL_FillRect(screenSurface, NULL, 0xFFFFFF);
-
-		drawImage("sticker", screenSurface, 0, 0);
-
-		SDL_UpdateWindowSurface( sdlWindow );
-	}
-}
-
-void Chao::loadImage(char* key, char* imagePath) {
-	SDL_Surface* newSurface = IMG_Load(imagePath);
-
-	Image newImage = { key, newSurface, 0, 0 };
-	images.add(newImage);
-}
-
-Chao::Image Chao::getImage(char* key) {
-	for (int i = 0; i < images.getSize(); ++i) {
-		if (strcmp(key, images[i].key) == 0) {
-			return images[i];
+			SwapBuffers(hDC);
 		}
 	}
-}
 
-void Chao::drawImage(char* key, SDL_Surface* targetSurface, float x, float y, float alpha, float scaleX, float scaleY, float angle, float rotationOffsetX, float rotationOffsetY) {
-	drawImage(getImage(key), targetSurface, x, y, alpha, scaleX, scaleY, angle, rotationOffsetX, rotationOffsetY);
-}
-
-void Chao::drawImage(Image image, SDL_Surface* targetSurface, float x, float y, float alpha, float scaleX, float scaleY, float angle, float rotationOffsetX, float rotationOffsetY) {
-	SDL_BlitSurface(image.surface, NULL, targetSurface, NULL);
-}
-
-void Chao::log(char* message) {
-	printf("%s\n", message);
-}
-
-void Chao::resetInput() {
-	for (int i = 0; i < KEY_CODES_COUNT; ++i) {
-		pressed[i] = false;
-		justPressed[i] = false;
-		justReleased[i] = false;
+	// DisableOpenGL
+	{
+		wglMakeCurrent(NULL, NULL);
+		wglDeleteContext(hRC);
+		ReleaseDC(hwnd, hDC);
 	}
+
+	DestroyWindow(hwnd);
 }
 
-#endif // CHAO_H
+
+struct Image* get_image(const char* image_name) {
+	for (int i = 0; i < MAX_IMAGES; ++i) {
+		if (images[i].name != NULL && strcmp(images[i].name, image_name) == 0) {
+			return &images[i];
+		}
+	}
+
+	return NULL;
+}
+
+
+void draw_image_part(Image img, Vector2 pos, Rect rect,
+		Color color = Color(1,1,1), Vector2 scale = Vector2(1, 1),
+		float angle = 0.f, Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		bool flip_x = false, bool flip_y = false) 
+{
+	int size_x = rect.w * scale.x;
+	int size_y = rect.h * scale.y;
+	Vector2 pivot_point = Vector2(size_x*rotation_pivot.x, size_y*rotation_pivot.y);
+	rect.x /= img.size.x;
+	rect.y /= img.size.y;
+	rect.w /= img.size.x;
+	rect.h /= img.size.y;
+
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glLoadIdentity();
+	glTranslated(pos.x + pivot_point.x, pos.y + pivot_point.y, 0); 
+	glRotatef(angle, 0, 0, 1);
+	glTranslated(-pivot_point.x, -pivot_point.y, 0); 
+	glBindTexture(GL_TEXTURE_2D, img.tex);
+	glBegin(GL_QUADS);
+	glColor4ub(color.r * 255.f,color.g * 255.f,color.b * 255.f,color.a * 255.f);
+	glTexCoord2f(rect.x, rect.y); 				glVertex2d(flip_x ? size_x : 0, flip_y ? size_y : 0);
+	glTexCoord2f(rect.x+rect.w, rect.y); 		glVertex2d(flip_x ? 0 : size_x, flip_y ? size_y : 0);
+	glTexCoord2f(rect.x+rect.w, rect.y+rect.h); glVertex2d(flip_x ? 0 : size_x, flip_y ? 0 : size_y);
+	glTexCoord2f(rect.x, rect.y+rect.h); 		glVertex2d(flip_x ? size_x : 0, flip_y ? 0 : size_y);
+	glEnd();
+}
+
+void draw_image(Image img, Vector2 pos, Color color = Color(1,1,1),
+		Vector2 scale = Vector2(1, 1), float angle = 0.f,
+		Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		bool flip_x = false, bool flip_y = false)
+{
+	draw_image_part(img, pos, Rect(0, 0, img.size.x, img.size.y), color, scale, angle, rotation_pivot, flip_x, flip_y);
+}
+
+void draw_image(const char* image_name, Vector2 pos, Color color = Color(1,1,1),
+		Vector2 scale = Vector2(1, 1), float angle = 0.f,
+		Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		bool flip_x = false, bool flip_y = false)
+{
+	struct Image* img = get_image(image_name);
+	if (img == NULL) {
+		printf("no such image! \"%s\"\n",image_name );
+		return;
+	}
+
+	draw_image(*img, pos, color, scale, angle, rotation_pivot, flip_x, flip_y);
+}
+
+
+void load_base64_image(const char* name, const char* encoded) {
+
+	size_t out_len;
+	unsigned char* decoded = base64_decode(encoded, strlen(encoded), &out_len);
+	if(decoded == NULL) {
+		printf("Couldn't decode %s.\n", name);
+		return;
+	}
+	upng_t* upng = upng_new_from_bytes(decoded, out_len);
+	upng_decode(upng);
+
+	int i = 0;
+	while (images[i].name != NULL) {
+		i ++;
+	}
+
+	images[i].name = strdup(name);
+	images[i].size.x = upng_get_width(upng);
+	images[i].size.y = upng_get_height(upng);
+
+	glEnable(GL_TEXTURE_2D);
+	glGenTextures(1, &(images[i].tex));
+	glBindTexture(GL_TEXTURE_2D, images[i].tex);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, image_smoothing_enabled ? GL_LINEAR : GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, image_smoothing_enabled ? GL_LINEAR : GL_NEAREST);
+
+	switch (upng_get_components(upng)) {
+	case 1:
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, images[i].size.x, images[i].size.y, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, upng_get_buffer(upng));
+		break;
+	case 2:	
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, images[i].size.x, images[i].size.y, 0, GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, upng_get_buffer(upng));
+		break;
+	case 3:
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, images[i].size.x, images[i].size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, upng_get_buffer(upng));
+		break;
+	case 4:
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, images[i].size.x, images[i].size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, upng_get_buffer(upng));
+		break;
+	}
+
+	upng_free(upng);
+}
+
+
+void on_resize() {
+	glViewport(0, 0, window_size.x, window_size.y);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+
+	screen_size = Vector2(window_size.x, window_size.y);
+	float scale_x = screen_size.x / base_screen_size.x;
+	float scale_y = screen_size.y / base_screen_size.y;
+	float scale = std::min(scale_x, scale_y);
+	
+	switch (screen_scaling_mode) {
+		case SSM_STRETCH: {
+			screen_size = Vector2(base_screen_size.x, base_screen_size.y);
+			break;
+		}
+		case SSM_EXTEND: {
+			if (base_screen_size.x * scale < window_size.x) {
+				// extend the viewport horizontally
+				int spare_width = window_size.x - (base_screen_size.x * scale);
+				screen_size.x = base_screen_size.x + (spare_width / scale);
+				screen_size.y = base_screen_size.y;
+			} else {
+				// extend the viewport vertically
+				int spare_height = screen_size.y - (base_screen_size.y * scale);
+				screen_size.x = base_screen_size.x;
+				screen_size.y = base_screen_size.y + (spare_height / scale);
+			}
+			break;
+		}
+	}
+
+    glOrtho(0, screen_size.x, screen_size.y, 0, -1, 1);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+
+}
+
+
+int WINAPI WinMain(HINSTANCE h_instance, HINSTANCE h_prev_instance, LPSTR lp_cmd_line, int cmd_show) {
+	chao_h_instance = h_instance;
+	chao_cmd_show = cmd_show;
+	chao_main();
+	return 0;
+}
+
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+	switch (uMsg) {
+		case WM_CLOSE: {
+			PostQuitMessage(0);
+			break;
+		}
+
+		case WM_DESTROY:
+			return 0;
+
+		case WM_KEYDOWN: {
+			if(!pressed[wParam]) just_pressed[wParam] = true;
+			pressed[wParam] = true;
+			switch (wParam) {
+				case VK_ESCAPE:
+					PostQuitMessage(0);
+				break;
+			}
+			break;
+		}
+
+		case WM_KEYUP: {
+			pressed[wParam] = false;
+			just_released[wParam] = true;
+			break;
+		}
+
+		case WM_SIZE: {
+			window_size.x = LOWORD(lParam);
+			window_size.y = HIWORD(lParam);
+			on_resize();
+			break;
+		}
+
+		default:
+			return DefWindowProc(hwnd, uMsg, wParam, lParam);
+	}
+
+	return 0;
+}
+
+
+#endif //CHAO_H
