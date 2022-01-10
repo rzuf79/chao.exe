@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <algorithm>
 #include <windows.h>
+#include <math.h>
 #include <GL/gl.h>
 #include "keyboard.h"
 #include "base64.h"
@@ -39,12 +40,11 @@ class Vector2 {
 		this->y = y;
 	}
 
-	Vector2& operator = (const Vector2 &a) {
-		x = a.x;
-		y = a.y;
-		return *this;
-	}
-
+	Vector2& operator = (const Vector2 &a) { x = a.x; y = a.y; return *this; }
+	Vector2 operator += (const Vector2 &a) { x += a.x; y += a.y; return *this; }
+	Vector2 operator -= (const Vector2 &a) { x -= a.x; y -= a.y; return *this; }
+	Vector2 operator *= (const Vector2 &a) { x *= a.x; y *= a.y; return *this; }
+	Vector2 operator /= (const Vector2 &a) { x /= a.x; y /= a.y; return *this; }
 	Vector2 operator + (const Vector2 &a) { return Vector2(x + a.x, y + a.y); }
 	Vector2 operator - (const Vector2 &a) { return Vector2(x - a.x, y - a.y); }
 	Vector2 operator * (const Vector2 &a) { return Vector2(x * a.x, y * a.y); }
@@ -119,8 +119,10 @@ class Image {
 void chao_main();
 LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);
 
+
 HINSTANCE chao_h_instance;
 int chao_cmd_show;
+HWND chao_hwnd;
 void on_resize();
 
 Image images[MAX_IMAGES];
@@ -167,7 +169,6 @@ float get_delta_time() {
 
 void chao_init(const char* window_name, int screen_width, int screen_height, ScreenScalingMode scaling_mode, void(*init_func_pointer)(), void(*update_func_pointer)()){
 	WNDCLASSEX wcex;
-	HWND hwnd;
 	HDC hDC;
 	HGLRC hRC;
 	MSG msg;
@@ -190,7 +191,7 @@ void chao_init(const char* window_name, int screen_width, int screen_height, Scr
 		return;
 	}
 
-	hwnd = CreateWindowEx(0,
+	chao_hwnd = CreateWindowEx(0,
 						  "ChaoWindow",	
 						  window_name,
 						  WS_OVERLAPPEDWINDOW,
@@ -203,13 +204,13 @@ void chao_init(const char* window_name, int screen_width, int screen_height, Scr
 						  chao_h_instance,
 						  NULL);
 
-	ShowWindow(hwnd, chao_cmd_show);
+	ShowWindow(chao_hwnd, chao_cmd_show);
 
 	// EnableOpenGL
 	{
 		PIXELFORMATDESCRIPTOR pfd;
 		int iFormat;
-		hDC = GetDC(hwnd);
+		hDC = GetDC(chao_hwnd);
 		ZeroMemory(&pfd, sizeof(pfd));
 		pfd.nSize = sizeof(pfd);
 		pfd.nVersion = 1;
@@ -234,11 +235,6 @@ void chao_init(const char* window_name, int screen_width, int screen_height, Scr
 	// init stuff
 
 	screen_scaling_mode = scaling_mode;
-
-	RECT window_rect;
-	GetClientRect(hwnd, &window_rect);
-	window_size.x = window_rect.right - window_rect.left;
-	window_size.y = window_rect.bottom - window_rect.top;
 
 	screen_size = Vector2(screen_width, screen_height);
 	base_screen_size = Vector2(screen_width, screen_height);
@@ -285,10 +281,20 @@ void chao_init(const char* window_name, int screen_width, int screen_height, Scr
 	{
 		wglMakeCurrent(NULL, NULL);
 		wglDeleteContext(hRC);
-		ReleaseDC(hwnd, hDC);
+		ReleaseDC(chao_hwnd, hDC);
 	}
 
-	DestroyWindow(hwnd);
+	DestroyWindow(chao_hwnd);
+}
+
+
+void set_window_size(int width, int height) {
+	RECT current_window_rect;
+	GetWindowRect(chao_hwnd, &current_window_rect);
+
+	SetWindowPos(chao_hwnd, NULL, current_window_rect.left, current_window_rect.top, width, height, 0);
+
+	on_resize();
 }
 
 
@@ -305,20 +311,22 @@ struct Image* get_image(const char* image_name) {
 
 void draw_image_part(Image img, Vector2 pos, Rect rect,
 		Color color = Color(1,1,1), Vector2 scale = Vector2(1, 1),
-		float angle = 0.f, Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		float angle = 0.f, Vector2 pivot = Vector2(0.5f, 0.5f),
 		bool flip_x = false, bool flip_y = false) 
 {
 	int size_x = rect.w * scale.x;
 	int size_y = rect.h * scale.y;
-	Vector2 pivot_point = Vector2(size_x*rotation_pivot.x, size_y*rotation_pivot.y);
+	Vector2 pivot_point = Vector2(size_x*pivot.x, size_y*pivot.y);
 	rect.x /= img.size.x;
 	rect.y /= img.size.y;
 	rect.w /= img.size.x;
 	rect.h /= img.size.y;
 
+	pos -= pivot_point;
+
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glLoadIdentity();
-	glTranslated(pos.x + pivot_point.x, pos.y + pivot_point.y, 0); 
+	glTranslated(pos.x+pivot_point.x, pos.y+pivot_point.y, 0); 
 	glRotatef(angle, 0, 0, 1);
 	glTranslated(-pivot_point.x, -pivot_point.y, 0); 
 	glBindTexture(GL_TEXTURE_2D, img.tex);
@@ -333,15 +341,15 @@ void draw_image_part(Image img, Vector2 pos, Rect rect,
 
 void draw_image(Image img, Vector2 pos, Color color = Color(1,1,1),
 		Vector2 scale = Vector2(1, 1), float angle = 0.f,
-		Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		Vector2 pivot = Vector2(0.5f, 0.5f),
 		bool flip_x = false, bool flip_y = false)
 {
-	draw_image_part(img, pos, Rect(0, 0, img.size.x, img.size.y), color, scale, angle, rotation_pivot, flip_x, flip_y);
+	draw_image_part(img, pos, Rect(0, 0, img.size.x, img.size.y), color, scale, angle, pivot, flip_x, flip_y);
 }
 
 void draw_image(const char* image_name, Vector2 pos, Color color = Color(1,1,1),
 		Vector2 scale = Vector2(1, 1), float angle = 0.f,
-		Vector2 rotation_pivot = Vector2(0.5f, 0.5f),
+		Vector2 pivot = Vector2(0.5f, 0.5f),
 		bool flip_x = false, bool flip_y = false)
 {
 	struct Image* img = get_image(image_name);
@@ -350,7 +358,32 @@ void draw_image(const char* image_name, Vector2 pos, Color color = Color(1,1,1),
 		return;
 	}
 
-	draw_image(*img, pos, color, scale, angle, rotation_pivot, flip_x, flip_y);
+	draw_image(*img, pos, color, scale, angle, pivot, flip_x, flip_y);
+}
+
+
+void draw_text(const char* font_image_name, Vector2 pos, Vector2 glyph_size, const char* text) {
+	Image img = *get_image(font_image_name);
+	int h_char_count = img.size.x / glyph_size.x;
+	int n = strlen(text);
+	Vector2 current_pos = pos;
+
+	for (int i = 0 ; i < n; ++i) {
+		if (text[i] == '\n') {
+			current_pos.x = pos.x;
+			current_pos.y += glyph_size.y;
+			continue;
+		}
+
+		int idx = (int)text[i];
+		int glyph_x = idx % h_char_count; // idx - (glyph_y * h_char_count);
+		int glyph_y = floor(idx / h_char_count);
+		Rect rect = Rect(glyph_x*glyph_size.x, glyph_y*glyph_size.y, glyph_size.x, glyph_size.y);
+
+		draw_image_part(img, current_pos, rect);
+
+		current_pos.x += glyph_size.x;
+	}
 }
 
 
@@ -399,7 +432,56 @@ void load_base64_image(const char* name, const char* encoded) {
 }
 
 
+// DWORD play_midi_file(HWND hWndNotify, LPSTR lpszMIDIFileName){
+//     UINT wDeviceID;
+//     DWORD dwReturn;
+//     MCI_OPEN_PARMS mciOpenParms;
+//     MCI_PLAY_PARMS mciPlayParms;
+//     MCI_STATUS_PARMS mciStatusParms;
+//     MCI_SEQ_SET_PARMS mciSeqSetParms;
+
+//     mciOpenParms.lpstrDeviceType = "sequencer";
+//     mciOpenParms.lpstrElementName = lpszMIDIFileName;
+//     if (dwReturn = mciSendCommand(NULL, MCI_OPEN,
+//         MCI_OPEN_TYPE | MCI_OPEN_ELEMENT,
+//         (DWORD)(LPVOID) &mciOpenParms)){
+//         return (dwReturn);
+//     }
+
+//     wDeviceID = mciOpenParms.wDeviceID;
+
+//     mciStatusParms.dwItem = MCI_SEQ_STATUS_PORT;
+//     if (dwReturn = mciSendCommand(wDeviceID, MCI_STATUS, 
+//         MCI_STATUS_ITEM, (DWORD)(LPVOID) &mciStatusParms)){
+//         mciSendCommand(wDeviceID, MCI_CLOSE, 0, NULL);
+//         return (dwReturn);
+//     }
+
+//     if (LOWORD(mciStatusParms.dwReturn) != MIDI_MAPPER){
+//         if (MessageBox(chao_hwnd,
+//             "The MIDI mapper is not available. Continue?",
+//             "", MB_YESNO) == IDNO){
+//             mciSendCommand(wDeviceID, MCI_CLOSE, 0, NULL);
+//             return (0L);
+//         }
+//     }
+
+//     mciPlayParms.dwCallback = (DWORD) hWndNotify;
+//     if (dwReturn = mciSendCommand(wDeviceID, MCI_PLAY, MCI_NOTIFY, 
+//         (DWORD)(LPVOID) &mciPlayParms)) {
+//         mciSendCommand(wDeviceID, MCI_CLOSE, 0, NULL);
+//         return (dwReturn);
+//     }
+
+//     return (0L);
+// }
+
 void on_resize() {
+	RECT window_rect;
+	GetClientRect(chao_hwnd, &window_rect);
+	window_size.x = window_rect.right - window_rect.left;
+	window_size.y = window_rect.bottom - window_rect.top;
+
 	glViewport(0, 0, window_size.x, window_size.y);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
